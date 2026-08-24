@@ -1,0 +1,97 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Syntax and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install nmap and lua
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nmap lua5.4
+
+      - name: Show versions
+        run: |
+          nmap --version | head -2
+          luac5.4 -v
+
+      - name: Run unit tests
+        run: ./test/run-tests.sh --unit
+
+  shellcheck:
+    name: Shell script lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Runner images ship shellcheck, but installing it keeps the job working
+      # on any runner.
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+      - name: Run shellcheck
+        run: shellcheck --severity=warning test/run-tests.sh
+
+  integration:
+    name: Integration against the OPC UA test matrix
+    runs-on: ubuntu-latest
+    # open62541 is compiled from source on a cold runner, which dominates the
+    # build time.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install nmap and lua
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nmap lua5.4
+
+      - name: Generate test certificates
+        working-directory: test-server
+        run: |
+          python -m pip install --quiet cryptography
+          python gen_certs.py
+
+      - name: Start the test servers
+        working-directory: test-server
+        run: |
+          start=$(date +%s)
+          docker compose up -d --build
+          echo "build and start took $(( $(date +%s) - start ))s"
+          docker compose ps
+
+      # run-tests.sh waits for the servers to answer OPC UA, not merely to
+      # accept a connection, so no extra readiness step is needed here.
+      - name: Run the full test suite
+        run: ./test/run-tests.sh
+
+      - name: Show a sample scan
+        if: always()
+        run: |
+          mkdir -p /tmp/nsedev/nselib
+          ln -sf "$PWD/opcua.lua" /tmp/nsedev/nselib/opcua.lua
+          NMAPDIR=/tmp/nsedev nmap -p 4840,4855,4885 \
+            --script ./opcua-discover.nse 127.0.0.1
+
+      - name: Server logs on failure
+        if: failure()
+        working-directory: test-server
+        run: docker compose logs --tail 200

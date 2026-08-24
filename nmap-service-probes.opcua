@@ -1,0 +1,41 @@
+# OPC UA (IEC 62541) service probe for Nmap version detection.
+#
+# Nmap ships no probe for OPC UA, so -sV cannot identify an OPC UA server at
+# all - not on port 4840 and least of all on the vendor ports where these
+# servers usually listen. This file closes that gap.
+#
+# The probe sends a well formed HEL (Hello) message of the OPC UA Connection
+# Protocol (OPC 10000-6, 7.1.2.3) carrying an endpoint URL the target cannot
+# know. Both possible answers identify the protocol:
+#
+#   ACKF  the server accepted the handshake
+#   ERRF  the server understood the message and rejected the endpoint URL,
+#         usually with Bad_TcpEndpointUrlInvalid (0x80830000)
+#
+# Layout of the 55 byte probe:
+#   "HEL" "F"                   message type and final chunk
+#   \x37\x00\x00\x00            MessageSize   = 55
+#   \x00\x00\x00\x00            ProtocolVersion = 0
+#   \x00\x20\x00\x00            ReceiveBufferSize = 8192 (the specified minimum)
+#   \x00\x20\x00\x00            SendBufferSize    = 8192
+#   \x00\x00\x00\x00            MaxMessageSize    = 0 (no limit)
+#   \x00\x00\x00\x00            MaxChunkCount     = 0 (no limit)
+#   \x17\x00\x00\x00            EndpointUrl length = 23
+#   "opc.tcp://nmap.org:4840"   EndpointUrl
+#
+# Usage until this reaches Nmap upstream:
+#   cat /usr/share/nmap/nmap-service-probes nmap-service-probes.opcua > /tmp/probes
+#   nmap -sV --versiondb /tmp/probes -p 4840 <target>
+#
+# Or append it to the installed database:
+#   sudo sh -c 'cat nmap-service-probes.opcua >> /usr/share/nmap/nmap-service-probes'
+
+Probe TCP OPCUAHello q|HELF\x37\x00\x00\x00\x00\x00\x00\x00\x00\x20\x00\x00\x00\x20\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17\x00\x00\x00opc.tcp://nmap.org:4840|
+rarity 8
+ports 4840,4843,4845,4855,4885,4897,26543,48010,48020,48030,48040,48050,49320,49380,51210,53530,62541
+
+match opcua-tcp m|^ACKF| p/OPC UA Binary Protocol/
+# The four bytes after the message header are the MessageSize, which varies
+# with the length of the Reason string, so they are skipped rather than pinned.
+match opcua-tcp m|^ERRF....\x00\x00\x83\x80|s p/OPC UA Binary Protocol/ i/endpoint URL rejected/
+match opcua-tcp m|^ERRF| p/OPC UA Binary Protocol/ i/handshake rejected/

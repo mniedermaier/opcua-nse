@@ -1,0 +1,10 @@
+{
+  "name": "opcua-nse-test-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "node-opcua server for the opcua-nse test matrix",
+  "main": "server.js",
+  "dependencies": {
+    "node-opcua": "^2.130.0"
+  }
+}

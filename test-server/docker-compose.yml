@@ -1,0 +1,132 @@
+# Test matrix for the opcua-discover NSE script.
+# Each service reproduces one configuration the script claims to detect.
+#
+#   docker compose up -d --build
+#   nmap -p 4840,4855,4885,4897,48010,62541 --script opcua-discover localhost
+
+x-server: &server
+  build: .
+  restart: unless-stopped
+  environment:
+    - PYTHONUNBUFFERED=1
+  volumes:
+    - ./certs:/app/certs:ro
+    # Mounted rather than baked in, so editing the server needs only a restart.
+    - ./servers.py:/app/servers.py:ro
+    - ./fault_server.py:/app/fault_server.py:ro
+    - ./hostile_server.py:/app/hostile_server.py:ro
+    - ./mdns_responder.py:/app/mdns_responder.py:ro
+
+services:
+  insecure:
+    <<: *server
+    container_name: opcua-test-insecure
+    command: ["python", "servers.py", "--mode", "insecure", "--port", "4840"]
+    ports:
+      - "4840:4840"
+
+  secure:
+    <<: *server
+    container_name: opcua-test-secure
+    command: ["python", "servers.py", "--mode", "secure", "--port", "4855"]
+    ports:
+      - "4855:4855"
+
+  legacy:
+    <<: *server
+    container_name: opcua-test-legacy
+    command: ["python", "servers.py", "--mode", "legacy", "--port", "4885"]
+    ports:
+      - "4885:4885"
+
+  expired:
+    <<: *server
+    container_name: opcua-test-expired
+    command: ["python", "servers.py", "--mode", "expired", "--port", "4897"]
+    ports:
+      - "4897:4897"
+
+  shared-a:
+    <<: *server
+    container_name: opcua-test-shared-a
+    command: ["python", "servers.py", "--mode", "shared-a", "--port", "48010"]
+    ports:
+      - "48010:48010"
+
+  shared-b:
+    <<: *server
+    container_name: opcua-test-shared-b
+    command: ["python", "servers.py", "--mode", "shared-b", "--port", "62541"]
+    ports:
+      - "62541:62541"
+
+  # Answers every handshake with ERR, which is still a positive OPC UA
+  # identification. No real stack can be told to do this on demand.
+  fault:
+    <<: *server
+    container_name: opcua-test-fault
+    command: ["python", "fault_server.py", "--port", "4845"]
+    ports:
+      - "4845:4845"
+
+  # A second, independent protocol implementation. Where this and asyncua
+  # disagree on encoding details, the NSE decoder has to handle both.
+  node-opcua:
+    build: ./stacks/node-opcua
+    container_name: opcua-test-node
+    restart: unless-stopped
+    environment:
+      - OPCUA_PORT=48030
+    ports:
+      - "48030:48030"
+
+  # A third implementation, in C, with a hand-built address space and its own
+  # encoding choices.
+  open62541:
+    build: ./stacks/open62541
+    container_name: opcua-test-open62541
+    restart: unless-stopped
+    environment:
+      - OPCUA_PORT=48020
+    ports:
+      - "48020:48020"
+
+  # Speaks the handshake correctly and then lies, one attack per port. The
+  # scripts have to give up quickly rather than allocate what it asks for.
+  hostile:
+    <<: *server
+    container_name: opcua-test-hostile
+    command: ["python", "hostile_server.py"]
+    ports:
+      - "26543:26543"
+      - "48040:48040"
+      - "48050:48050"
+      - "49320:49320"
+      - "49380:49380"
+      - "51210:51210"
+      - "53530:53530"
+
+  # Announces an OPC UA server over mDNS, which no stack in the matrix does.
+  # Needs the host network: multicast does not cross the bridge.
+  mdns:
+    build: .
+    container_name: opcua-test-mdns
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./mdns_responder.py:/app/mdns_responder.py:ro
+    command: ["python", "mdns_responder.py", "--port", "4840",
+              "--name", "opcua-nse test announcement"]
+
+  # A Local Discovery Server with the multicast extension: the only kind of
+  # server that answers FindServersOnNetwork.
+  lds:
+    build: ./stacks/open62541-lds
+    container_name: opcua-test-lds
+    restart: unless-stopped
+    environment:
+      - OPCUA_PORT=4843
+    ports:
+      - "4843:4843"

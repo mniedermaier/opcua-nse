@@ -1,0 +1,14 @@
+# OPC UA Test Server Requirements
+# Based on FreeOpcUa/opcua-asyncio
+
+# Main OPC UA library
+asyncua>=1.1.0
+
+# Optional: for enhanced cryptography support
+cryptography>=41.0.0
+
+# Optional: for certificate generation
+python-dateutil>=2.8.2
+
+# Multicast DNS announcements for broadcast-opcua-discover
+zeroconf>=0.130.0
